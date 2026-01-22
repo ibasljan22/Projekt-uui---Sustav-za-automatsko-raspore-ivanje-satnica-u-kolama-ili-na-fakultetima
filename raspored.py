@@ -1,456 +1,282 @@
-import random
-from dataclasses import dataclass
-from typing import List, Tuple, Dict, Optional
-import math
+# ==================================================
+# PODACI
+# ==================================================
 
-# ==========================================
-# 1) ENTITETI
-# ==========================================
+razredi = ["3b", "4c", "6b", "8a"]
 
-class Nastavnik:
-    def __init__(self, ime: str):
-        self.ime = ime
-    def __repr__(self): return self.ime
+predmeti_po_razredu = {
+    "3b": ["mat", "hrv", "lik", "prir", "glaz", "tjelesni", "SRZ"],
+    "4c": ["mat", "hrv", "lik", "prir", "glaz", "tjelesni", "SRZ"],
+    "6b": ["mat", "hrv", "geo", "fiz", "inf", "tjelesni", "SRZ", "pov", "kem"],
+    "8a": ["mat", "hrv", "geo", "fiz", "inf", "tjelesni", "SRZ", "pov", "kem"],
+}
 
-class Razred:
-    def __init__(self, oznaka: str):
-        self.oznaka = oznaka
-    def __repr__(self): return self.oznaka
+sati_po_predmetu = {
+    "mat": 4,
+    "hrv": 4,
+    "lik": 2,
+    "prir": 3,
+    "geo": 2,
+    "glaz": 1,
+    "fiz": 2,
+    "inf": 1,
+    "tjelesni": 2,
+    "SRZ": 1,
+    "pov": 2,
+    "kem": 2,
+}
 
-class BlokPredmet:
-    """Predstavlja blok sat (2 školska sata odjednom)."""
-    def __init__(self, naziv: str, nastavnik: Nastavnik, razred: Razred):
-        self.naziv = naziv
-        self.nastavnik = nastavnik
-        self.razred = razred
-    def __repr__(self): return f"{self.naziv} (Blok)"
+profesori_za_predmet = {
+    "mat": ["prof1", "prof2", "prof3", "prof4", "prof8"],
+    "hrv": ["prof1", "prof2", "prof3", "prof4", "prof8"],
+    "lik": ["prof1", "prof2", "prof7"],
+    "prir": ["prof1", "prof2"],
+    "glaz": ["prof1", "prof2", "prof7"],
+    "geo": ["prof3", "prof4", "prof6"],
+    "fiz": ["prof3", "prof4", "prof6"],
+    "inf": ["prof5"],
+    "tjelesni": ["prof9", "prof10"],
+    "SRZ": ["prof1", "prof2"],
+    "pov": ["prof3", "prof4", "prof6"],
+    "kem": ["prof2", "prof6"],
+}
 
-class Ucionica:
-    def __init__(self, naziv: str):
-        self.naziv = naziv
-    def __repr__(self): return self.naziv
+dani = ["PON", "UTO", "SRI", "CET", "PET"]
+termini = [f"{dan}_{sat}" for dan in dani for sat in range(1, 7)]
+ucionice = [f"U{i}" for i in range(1, 6)]
 
-class TerminBloka:
-    """Definira fiksne termine blokova."""
-    def __init__(self, dan: str, day_idx: int, indeks: int, vrijeme_opis: str):
-        self.dan = dan
-        self.day_idx = day_idx     # 0..4
-        self.indeks = indeks       # 0..3
-        self.vrijeme_opis = vrijeme_opis
-    def __repr__(self): return f"{self.dan} {self.vrijeme_opis}"
 
-# ==========================================
-# 2) TIPOVI
-# ==========================================
+# ==================================================
+# VARIJABLE I DOMENE
+# ==================================================
 
-RasporedUnos = Tuple[BlokPredmet, TerminBloka, Ucionica]
-Dodjela = Tuple[TerminBloka, Ucionica]
+varijable = []
+for r in razredi:
+    for p in predmeti_po_razredu[r]:
+        for i in range(sati_po_predmetu[p]):
+            varijable.append((r, p, i))
 
-# ==========================================
-# 3) BRZA PROVJERA KONFLIKTA (set-ovi)
-# ==========================================
+domene = {}
+for v in varijable:
+    _, predmet, _ = v
+    domene[v] = [
+        (t, u, prof)
+        for t in termini
+        for u in ucionice
+        for prof in profesori_za_predmet[predmet]
+    ]
 
-def konflikt_sets(teacher_busy, class_busy, room_busy, blok: BlokPredmet, termin: TerminBloka, ucionica: Ucionica) -> bool:
-    key = (termin.day_idx, termin.indeks)
-    if (blok.nastavnik, key) in teacher_busy:
-        return True
-    if (blok.razred, key) in class_busy:
-        return True
-    if (ucionica, key) in room_busy:
-        return True
-    return False
 
-# ==========================================
-# 4) CSP DOMENE + HEURISTIKE (MRV, LCV, Forward checking)
-# ==========================================
+# ==================================================
+# ZAUZETOSTI
+# ==================================================
 
-def moguce_dodjele(
-    blok: BlokPredmet,
-    svi_termini: List[TerminBloka],
-    sve_ucionice: List[Ucionica],
-    teacher_busy,
-    class_busy,
-    room_busy
-) -> List[Dodjela]:
-    dom: List[Dodjela] = []
-    for t in svi_termini:
-        for u in sve_ucionice:
-            if not konflikt_sets(teacher_busy, class_busy, room_busy, blok, t, u):
-                dom.append((t, u))
-    return dom
+zauzet_razred = set()
+zauzet_profesor = set()
+zauzeta_ucionica = set()
 
-def odaberi_varijablu_MRV(
-    preostali: List[BlokPredmet],
-    svi_termini: List[TerminBloka],
-    sve_ucionice: List[Ucionica],
-    teacher_busy,
-    class_busy,
-    room_busy
-) -> Tuple[BlokPredmet, List[Dodjela]]:
-    """
-    MRV: izaberi blok s najmanje opcija.
-    """
-    best_blok = None
-    best_dom = None
-    best_len = 10**9
 
-    for b in preostali:
-        dom = moguce_dodjele(b, svi_termini, sve_ucionice, teacher_busy, class_busy, room_busy)
-        if len(dom) < best_len:
-            best_len = len(dom)
-            best_blok = b
-            best_dom = dom
-            if best_len == 0:
-                break
+# ==================================================
+# OGRANIČENJA
+# ==================================================
 
-    return best_blok, best_dom  # type: ignore
+def provjeri_max_sati_po_danu(rjesenje, razred, termin):
+    dan, _ = termin.split("_")
+    broj = 0
+    for (r, _, _), (t, _, _) in rjesenje.items():
+        if r == razred:
+            d, _ = t.split("_")
+            if d == dan:
+                broj += 1
+    return broj < 5
 
-def forward_check(
-    preostali: List[BlokPredmet],
-    svi_termini: List[TerminBloka],
-    sve_ucionice: List[Ucionica],
-    teacher_busy,
-    class_busy,
-    room_busy
-) -> bool:
-    """
-    Forward checking: svaki preostali blok mora imati barem 1 opciju.
-    """
-    for b in preostali:
-        if len(moguce_dodjele(b, svi_termini, sve_ucionice, teacher_busy, class_busy, room_busy)) == 0:
+
+def provjeri_predmet_po_danu(rjesenje, razred, predmet, termin):
+    dan, sat = termin.split("_")
+    sat = int(sat)
+
+    sati_u_danu = []
+    for (r, p, _), (t, _, _) in rjesenje.items():
+        if r == razred and p == predmet:
+            d, s = t.split("_")
+            if d == dan:
+                sati_u_danu.append(int(s))
+
+    if predmet not in ["mat", "hrv", "tjelesni"]:
+        return len(sati_u_danu) == 0
+
+    if predmet in ["mat", "hrv"]:
+        return len(sati_u_danu) < 2
+
+    if predmet == "tjelesni":
+        novi = sorted(sati_u_danu + [sat])
+        if len(novi) > 2:
             return False
+        if len(novi) == 2:
+            return novi[1] - novi[0] == 1
+        return True
+
+
+def provjeri_ne_dan_za_danom(rjesenje, razred, predmet, termin):
+    dan, _ = termin.split("_")
+    idx = dani.index(dan)
+
+    for (r, p, _), (t, _, _) in rjesenje.items():
+        if r == razred and p == predmet:
+            d, _ = t.split("_")
+            j = dani.index(d)
+            if abs(idx - j) == 1:
+                return False
+
     return True
 
-def lcv_score(
-    blok: BlokPredmet,
-    dodjela: Dodjela,
-    preostali: List[BlokPredmet],
-    svi_termini: List[TerminBloka],
-    sve_ucionice: List[Ucionica],
-    teacher_busy,
-    class_busy,
-    room_busy
-) -> int:
-    """
-    LCV: koliko opcija ostaje drugima nakon što privremeno dodijelimo ovu vrijednost.
-    Veće je bolje.
-    """
-    t, u = dodjela
 
-    # privremeno zauzmi
-    key = (t.day_idx, t.indeks)
+def konzistentno(var, vrijednost):
+    razred, predmet, _ = var
+    termin, ucionica, profesor = vrijednost
 
-    teacher_busy2 = set(teacher_busy); teacher_busy2.add((blok.nastavnik, key))
-    class_busy2 = set(class_busy);     class_busy2.add((blok.razred, key))
-    room_busy2 = set(room_busy);       room_busy2.add((u, key))
+    if not provjeri_max_sati_po_danu(rjesenje, razred, termin):
+        return False
 
-    total = 0
-    for other in preostali:
-        if other is blok:
-            continue
-        total += len(moguce_dodjele(other, svi_termini, sve_ucionice, teacher_busy2, class_busy2, room_busy2))
-    return total
+    if not provjeri_predmet_po_danu(rjesenje, razred, predmet, termin):
+        return False
 
-# ==========================================
-# 5) OPTIMALNOST: COST FUNKCIJA (ravnomjerna raspodjela po danima)
-# ==========================================
+    if not provjeri_ne_dan_za_danom(rjesenje, razred, predmet, termin):
+        return False
 
-def make_class_totals(blokovi: List[BlokPredmet]) -> Dict[Razred, int]:
-    totals: Dict[Razred, int] = {}
-    for b in blokovi:
-        totals[b.razred] = totals.get(b.razred, 0) + 1
-    return totals
+    if (razred, termin) in zauzet_razred:
+        return False
 
-def incremental_balance_cost(
-    razred: Razred,
-    day_idx: int,
-    counts_by_class_day: Dict[Razred, List[int]],
-    ideal_per_day: Dict[Razred, float],
-    w_balance: float
-) -> float:
-    """
-    Trošak ravnomjernosti: sum_{day} (count(day) - ideal)^2
-    Incremental = razlika kad povećamo count na tom danu za 1.
-    """
-    old = counts_by_class_day[razred][day_idx]
-    new = old + 1
-    ideal = ideal_per_day[razred]
-    before = (old - ideal) ** 2
-    after = (new - ideal) ** 2
-    return w_balance * (after - before)
+    if (ucionica, termin) in zauzeta_ucionica:
+        return False
 
-# ==========================================
-# 6) DFS IZ LABOSA + BRANCH & BOUND (optimalno)
-# ==========================================
+    if (profesor, termin) in zauzet_profesor:
+        return False
 
-@dataclass
-class Node:
-    raspored: List[RasporedUnos]
-    preostali: List[BlokPredmet]
-    teacher_busy: set
-    class_busy: set
-    room_busy: set
-    counts_by_class_day: Dict[Razred, List[int]]
-    cost_so_far: float
+    return True
 
-def dfs_csp_optimal_schedule(
-    blokovi: List[BlokPredmet],
-    svi_termini: List[TerminBloka],
-    sve_ucionice: List[Ucionica],
-    max_nodes: int = 2_000_000,
-    seed: int = 101,
-    w_balance: float = 6.0,       # koliko jako forsira ravnomjernost kroz dane
-    progress_every: int = 20000
-) -> Optional[List[RasporedUnos]]:
-    """
-    DFS (iterativno sa stogom) + MRV + LCV + forward checking
-    + Branch & Bound nad cost funkcijom (traži optimalan raspored).
-    """
-    random.seed(seed)
 
-    # ideal po danu za svaki razred
-    totals = make_class_totals(blokovi)
-    ideal_per_day = {r: totals[r] / 5.0 for r in totals}  # 5 radnih dana
+# ==================================================
+# MRV
+# ==================================================
 
-    # inicijalno brojanje po razred/dan
-    counts_by_class_day0 = {r: [0, 0, 0, 0, 0] for r in totals}
+def odaberi_varijablu(nerasporedjene, domene):
+    return min(nerasporedjene, key=lambda v: len(domene[v]))
 
-    start = Node(
-        raspored=[],
-        preostali=list(blokovi),
-        teacher_busy=set(),
-        class_busy=set(),
-        room_busy=set(),
-        counts_by_class_day=counts_by_class_day0,
-        cost_so_far=0.0
-    )
 
-    best_cost = float("inf")
-    best_solution: Optional[List[RasporedUnos]] = None
+# ==================================================
+# FORWARD CHECKING
+# ==================================================
 
-    stack: List[Node] = [start]
-    visited = 0
+def forward_checking(var, vrijednost, domene):
+    razred, _, _ = var
+    termin, ucionica, profesor = vrijednost
 
-    while stack and visited < max_nodes:
-        node = stack.pop()
-        visited += 1
+    uklonjeno = []
 
-        if progress_every and visited % progress_every == 0:
-            print(f"[DFS-opt] visited={visited}, best_cost={best_cost:.3f}, depth={len(node.raspored)}/{len(blokovi)}, stack={len(stack)}")
-
-        # Ako smo već gori od najboljeg, nema smisla
-        if node.cost_so_far >= best_cost:
+    for v in domene:
+        if v == var:
             continue
 
-        # cilj
-        if not node.preostali:
-            # potpuno rješenje
-            if node.cost_so_far < best_cost:
-                best_cost = node.cost_so_far
-                best_solution = node.raspored
-            continue
-
-        # MRV: izaberi najteži blok
-        blok, dom = odaberi_varijablu_MRV(
-            node.preostali, svi_termini, sve_ucionice,
-            node.teacher_busy, node.class_busy, node.room_busy
-        )
-        if dom is None or len(dom) == 0:
-            continue
-
-        # Pripremi domenu s rangiranjem:
-        # 1) minimalni inkrement troška (ravnomjernost)
-        # 2) LCV (više opcija ostalima = bolje)
-        scored_values = []
-        for d in dom:
-            t, u = d
-            inc = incremental_balance_cost(
-                razred=blok.razred,
-                day_idx=t.day_idx,
-                counts_by_class_day=node.counts_by_class_day,
-                ideal_per_day=ideal_per_day,
-                w_balance=w_balance
-            )
-            lcv = lcv_score(
-                blok=blok,
-                dodjela=d,
-                preostali=node.preostali,
-                svi_termini=svi_termini,
-                sve_ucionice=sve_ucionice,
-                teacher_busy=node.teacher_busy,
-                class_busy=node.class_busy,
-                room_busy=node.room_busy
-            )
-            # sortiramo: manji inc bolje, veći lcv bolje
-            scored_values.append((inc, -lcv, d))
-
-        scored_values.sort(key=lambda x: (x[0], x[1]))
-
-        # DFS: push obrnuto da se prvo isproba najbolja opcija
-        for inc, _neg_lcv, (t, u) in reversed(scored_values):
-            key = (t.day_idx, t.indeks)
-
-            # napravi nove setove
-            teacher_busy2 = set(node.teacher_busy); teacher_busy2.add((blok.nastavnik, key))
-            class_busy2 = set(node.class_busy);     class_busy2.add((blok.razred, key))
-            room_busy2 = set(node.room_busy);       room_busy2.add((u, key))
-
-            # ažuriraj counts_by_class_day (kopiraj samo listu za taj razred)
-            counts2 = dict(node.counts_by_class_day)
-            counts2[blok.razred] = counts2[blok.razred].copy()
-            counts2[blok.razred][t.day_idx] += 1
-
-            cost2 = node.cost_so_far + inc
-
-            # Branch & Bound pruning
-            if cost2 >= best_cost:
+        nova = []
+        for (t, u, p) in domene[v]:
+            if (
+                (v[0] == razred and t == termin) or
+                (u == ucionica and t == termin) or
+                (p == profesor and t == termin)
+            ):
                 continue
+            nova.append((t, u, p))
 
-            preostali2 = [b for b in node.preostali if b is not blok]
-            raspored2 = node.raspored + [(blok, t, u)]
+        if len(nova) < len(domene[v]):
+            uklonjeno.append((v, domene[v]))
+            domene[v] = nova
 
-            # Forward checking (brzo rezanje)
-            if not forward_check(preostali2, svi_termini, sve_ucionice, teacher_busy2, class_busy2, room_busy2):
+        if not domene[v]:
+            return False, uklonjeno
+
+    return True, uklonjeno
+
+
+# ==================================================
+# BACKTRACKING
+# ==================================================
+
+def backtracking(rjesenje, domene):
+    if len(rjesenje) == len(varijable):
+        return True
+
+    nerasp = [v for v in varijable if v not in rjesenje]
+    var = odaberi_varijablu(nerasp, domene)
+
+    for vrijednost in domene[var]:
+        if konzistentno(var, vrijednost):
+            razred, _, _ = var
+            termin, ucionica, profesor = vrijednost
+
+            rjesenje[var] = vrijednost
+            zauzet_razred.add((razred, termin))
+            zauzeta_ucionica.add((ucionica, termin))
+            zauzet_profesor.add((profesor, termin))
+
+            uspjeh, uklonjeno = forward_checking(var, vrijednost, domene)
+            if uspjeh and backtracking(rjesenje, domene):
+                return True
+
+            del rjesenje[var]
+            zauzet_razred.remove((razred, termin))
+            zauzeta_ucionica.remove((ucionica, termin))
+            zauzet_profesor.remove((profesor, termin))
+            for v, stara in uklonjeno:
+                domene[v] = stara
+
+    return False
+
+
+# ==================================================
+# ISPIS
+# ==================================================
+
+def ispisi_satnicu_po_razredima(rjesenje, razredi):
+    sati = list(range(1, 8))
+
+    for razred in razredi:
+        print("\n" + "=" * 90)
+        print(f"SATNICA ZA RAZRED {razred}".center(90))
+        print("=" * 90)
+
+        tablica = {dan: {sat: "" for sat in sati} for dan in dani}
+
+        for (r, predmet, _), (termin, ucionica, _) in rjesenje.items():
+            if r != razred:
                 continue
+            dan, sat = termin.split("_")
+            tablica[dan][int(sat)] = f"{predmet.upper()} ({ucionica})"
 
-            stack.append(Node(
-                raspored=raspored2,
-                preostali=preostali2,
-                teacher_busy=teacher_busy2,
-                class_busy=class_busy2,
-                room_busy=room_busy2,
-                counts_by_class_day=counts2,
-                cost_so_far=cost2
-            ))
+        print(f"{'SAT':<5}", end="")
+        for dan in dani:
+            print(f"| {dan:^14}", end="")
+        print("|")
 
-    if best_solution is not None:
-        print(f"[DFS-opt] Optimalno rješenje nađeno. visited={visited}, best_cost={best_cost:.3f}")
-    else:
-        print(f"[DFS-opt] Nije nađeno rješenje u limitu čvorova. visited={visited}, max_nodes={max_nodes}")
-    return best_solution
+        print("-" * (5 + len(dani) * 17))
 
-# ==========================================
-# 7) ISPIS
-# ==========================================
+        for sat in sati:
+            print(f"{sat:<5}", end="")
+            for dan in dani:
+                print(f"| {tablica[dan][sat]:^14}", end="")
+            print("|")
 
-def ispisi_raspored(konacni_raspored: List[RasporedUnos], dani: List[str]) -> None:
-    dan_map = {d: i for i, d in enumerate(dani)}
-    konacni_raspored.sort(key=lambda x: (dan_map[x[1].dan], x[1].indeks, x[0].razred.oznaka))
+        print("-" * (5 + len(dani) * 17))
 
-    current_day = ""
-    print("=" * 110)
-    print(f"{'VRIJEME':<25} | {'RAZRED':<6} | {'PREDMET (2 SATA)':<18} | {'NASTAVNIK':<25} | {'UČIONICA'}")
-    print("=" * 110)
 
-    for (predmet, termin, ucionica) in konacni_raspored:
-        if termin.dan != current_day:
-            print(f"\n>>> {termin.dan} <<<")
-            print("-" * 110)
-            current_day = termin.dan
+# ==================================================
+# POKRETANJE
+# ==================================================
 
-        print(f"{termin.vrijeme_opis:<25} | {str(predmet.razred):<6} | {predmet.naziv:<18} | {str(predmet.nastavnik):<25} | {ucionica.naziv}")
+rjesenje = {}
+uspjeh = backtracking(rjesenje, domene)
 
-    print("\n" + "=" * 110)
-    print("NAPOMENA: Svi prikazani predmeti traju 2 školska sata (90 min + pauze).")
-    print("Dan može završiti ranije ako nema više blokova za taj razred (što je dozvoljeno).")
-
-# ==========================================
-# 8) PODACI (tvoji)
-# ==========================================
-
-# --- Nastavnici ---
-n_mat = Nastavnik("Prof. Horvat (Mat)")
-n_hrv = Nastavnik("Prof. Kovač (Hrv)")
-n_eng = Nastavnik("Prof. Smith (Eng)")
-n_inf = Nastavnik("Prof. Jurić (Inf)")
-n_priroda = Nastavnik("Prof. Babić (Fiz/Bio)")
-n_drustvo = Nastavnik("Prof. Zec (Pov/Geo)")
-n_lik = Nastavnik("Prof. Barišić (Lik)")
-n_glaz = Nastavnik("Prof. Novak (Glaz)")
-n_tech = Nastavnik("Prof. Marić (Teh)")
-n_raz = Nastavnik("Razrednik (SR)")
-
-# --- Učionice ---
-ucionice = [
-    Ucionica("Učionica 1 (Velika)"),
-    Ucionica("Učionica 2 (Manja)"),
-    Ucionica("Informatička")
-]
-
-# --- Razredi ---
-r1a = Razred("1.A")
-r1b = Razred("1.B")
-
-# --- Blokovi ---
-blokovi_za_rasporediti: List[BlokPredmet] = []
-
-def dodaj_predmet(razred: Razred, naziv: str, nastavnik: Nastavnik, broj_blokova_tjedno: int):
-    for _ in range(broj_blokova_tjedno):
-        blokovi_za_rasporediti.append(BlokPredmet(naziv, nastavnik, razred))
-
-# 1.A
-dodaj_predmet(r1a, "Matematika", n_mat, 3)
-dodaj_predmet(r1a, "Hrvatski", n_hrv, 3)
-dodaj_predmet(r1a, "Engleski", n_eng, 2)
-dodaj_predmet(r1a, "Informatika", n_inf, 2)
-dodaj_predmet(r1a, "Fizika", n_priroda, 1)
-dodaj_predmet(r1a, "Biologija", n_priroda, 1)
-dodaj_predmet(r1a, "Povijest", n_drustvo, 1)
-dodaj_predmet(r1a, "Likovni", n_lik, 1)
-dodaj_predmet(r1a, "Glazbeni", n_glaz, 1)
-dodaj_predmet(r1a, "Tehnička", n_tech, 1)
-dodaj_predmet(r1a, "Sat razrednika", n_raz, 1)
-
-# 1.B
-dodaj_predmet(r1b, "Matematika", n_mat, 3)
-dodaj_predmet(r1b, "Hrvatski", n_hrv, 3)
-dodaj_predmet(r1b, "Engleski", n_eng, 2)
-dodaj_predmet(r1b, "Informatika", n_inf, 2)
-dodaj_predmet(r1b, "Fizika", n_priroda, 1)
-dodaj_predmet(r1b, "Biologija", n_priroda, 1)
-dodaj_predmet(r1b, "Povijest", n_drustvo, 1)
-dodaj_predmet(r1b, "Likovni", n_lik, 1)
-dodaj_predmet(r1b, "Glazbeni", n_glaz, 1)
-dodaj_predmet(r1b, "Tehnička", n_tech, 1)
-dodaj_predmet(r1b, "Sat razrednika", n_raz, 1)
-
-# promiješaj (DFS će svejedno MRV-om birati teško prvo)
-random.seed(101)
-random.shuffle(blokovi_za_rasporediti)
-
-# --- Termini blokova (4 bloka dnevno x 5 dana) ---
-dani = ["PONEDJELJAK", "UTORAK", "SRIJEDA", "ČETVRTAK", "PETAK"]
-vremena = [
-    (0, "08:00 - 09:35 (1. blok)"),
-    (1, "09:40 - 11:15 (2. blok)"),
-    (2, "11:20 - 12:55 (3. blok)"),
-    (3, "13:00 - 14:35 (4. blok)")
-]
-
-svi_termini: List[TerminBloka] = []
-for day_idx, dan in enumerate(dani):
-    for indeks, opis in vremena:
-        svi_termini.append(TerminBloka(dan, day_idx, indeks, opis))
-
-# ==========================================
-# 9) IZVRŠAVANJE
-# ==========================================
-
-print(f"Pokušavam rasporediti {len(blokovi_za_rasporediti)} blok-sati (ukupno {len(blokovi_za_rasporediti)*2} školskih sati)...")
-print("Tražim optimalno rješenje: DFS (labos) + MRV + LCV + forward checking + Branch&Bound(cost=ravnomjernost)\n")
-
-konacni_raspored = dfs_csp_optimal_schedule(
-    blokovi=blokovi_za_rasporediti,
-    svi_termini=svi_termini,
-    sve_ucionice=ucionice,
-    max_nodes=2_000_000,
-    seed=101,
-    w_balance=6.0,        
-    progress_every=20000
-)
-
-if konacni_raspored:
-    ispisi_raspored(konacni_raspored, dani)
+if uspjeh:
+    ispisi_satnicu_po_razredima(rjesenje, razredi)
 else:
-    print("Greška: Nemoguće napraviti raspored s ovim ograničenjima (ili je limit max_nodes premalen).")
-    print("Probaj povećati max_nodes ili dodati još jednu učionicu.")
+    print("NEMA RJEŠENJA")
